@@ -1,0 +1,49 @@
+.program sniffer
+
+; this program is intended to capture SPI mode 0 traffic clocked at 25MHz to 50MHz
+; with or without the use of a chip select signal to indicate transaction boundaries.
+.wrap_target
+    ; if we have a chip select signal then this will keep us from reading unnecessary data.
+    ; if we don't have access to a chip select signal then this pin must be grounded
+    ; or this line can be commented out.
+    wait 0 gpio 3 ; CS
+
+    ; wait for the rising edge of a clock pulse.
+    ; we'll consider this to be the start of a transaction.
+    wait 1 gpio 2 ; CLK
+
+read:
+    ; read the state of the data signal.
+    in pins, 1 ; MOSI or MISO
+
+    ; wait for the falling edge of the clock pulse.
+    wait 0 gpio 2 ; CLK
+
+    ; repeatedly check if the clock signal is high yet.
+    ; this is done to detect the end of a transaction without a chip select signal.
+    ; we're using an unrolled loop for performance.
+    ;
+    ; the slowest clock signal we expect is 25MHz which has a period of 40ns.
+    ; assuming a roughly 50% dusty cycle, that clock signal will be low for 20ns.
+    ; with this state machine running at 200MHz, each instruction will take 5ns.
+    ; 6 jmp instructions * 5ns per instruction = 30ns.
+    ; i.e. long enough to get though the low part of a 25MHz clock.
+    ;
+    ; increase the number of jmp instructions to support lower clock frequencies.
+    jmp pin read ; CLK
+    jmp pin read ; CLK
+    jmp pin read ; CLK
+    jmp pin read ; CLK
+    jmp pin read ; CLK
+    jmp pin read ; CLK
+
+    ; the clock signal has been low for too long.
+    ; assume we're at the end of a transaction.
+    ;
+    ; if everything has gone correctly then the ISR is empty.
+    ; if not, then the ISR may have garbage data in it.
+    ; flush the ISR to ensures a clean start on the next transaction.
+    ;
+    ; flushing the ISR does not trigger an auto-push to the RX FIFO.
+    mov isr, null
+.wrap
