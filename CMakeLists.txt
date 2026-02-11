@@ -21,6 +21,7 @@ target_link_libraries(pico-tpm-spider
     hardware_clocks
     hardware_dma
     hardware_pio
+    hardware_watchdog
     pico_multicore
     pico_stdlib
 )

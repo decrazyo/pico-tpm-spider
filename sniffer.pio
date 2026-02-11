@@ -2,6 +2,32 @@
 
 ; this program is intended to capture SPI mode 0 traffic clocked at 25MHz to 50MHz
 ; with or without the use of a chip select signal to indicate transaction boundaries.
+;
+; SPI transaction start example:
+;                                   read      read      read
+;                                   |         |         |
+;     MOSI/MISO: -------------------------,         ,----------
+;                                         '---------'          
+;     CLK:                         ,----,    ,----,    ,----,  
+;                ------------------'    '----'    '----'    '--
+;     CS:        --------,                                     
+;                        '-------------------------------------
+;                        |         |
+;                        |         inferred transaction start
+;                        true transaction start
+;
+; SPI transaction end example:
+;                   read      read      read
+;                   |         |         |
+;     MOSI/MISO: ---------,         ,---------,
+;                         '---------'         '----------------
+;     CLK:         ,----,    ,----,    ,----,                  
+;                --'    '----'    '----'    '------------------
+;     CS:                                              ,-------
+;                --------------------------------------'
+;                                                   |  |
+;                            inferred transaction end  |
+;                                   true transaction end
 .wrap_target
     ; if we have a chip select signal then this will keep us from reading unnecessary data.
     ; if we don't have access to a chip select signal then this pin must be grounded
