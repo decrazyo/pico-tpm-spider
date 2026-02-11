@@ -123,8 +123,9 @@ You should see output similar to this.
 > Press any key to finalize the capture and reboot.  
 > VMK: DEADC0DEDEADC0DEDEADC0DEDEADC0DEDEADC0DEDEADC0DEDEADC0DEDEADC0DE  
 
-If the VMK does not automatically appear by the time the system has booted then press a key to finalize the capture.
-This will cause the Pi Pico to parse any data remaining in its buffer and may recover the VMK.  
+> [!NOTE]
+> If the VMK does not automatically appear by the time the system has booted then press a key to finalize the capture.
+> This will cause the Pi Pico to parse any data remaining in its buffer and may recover the VMK.  
 
 The recovered VMK can be used with the `dislocker` utility to decrypt the target system's hard drive.  
 
