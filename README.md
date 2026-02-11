@@ -145,3 +145,4 @@ ls /mnt/drive_c/
 * https://github.com/stacksmashing/pico-tpmsniffer
 * https://github.com/zaphoxx/pico-tpmsniffer-spi
 * https://github.com/aplhk/pico-spisniffer
+* https://github.com/jerji/picobitlkr
