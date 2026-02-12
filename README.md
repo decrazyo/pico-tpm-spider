@@ -106,9 +106,11 @@ Connect the Pi Pico's pins to your TPM chip according to the following table.
 | GPIO 2   | CLK        |
 | GPIO 3   | CS or GND  |
 
-The use of a chip select (CS) signal is optional but recommenced since it significantly reduces the amount of data that the Pi Pico needs to parse.
+> [!NOTE]
+> The use of a chip select (CS) signal is optional but recommenced since it significantly reduces the amount of data that the Pi Pico needs to parse.
+
 > [!IMPORTANT]
-> If you're not providing the Pi Pico with the TPM's CS signal then GPIO 3 must be grounded!  
+> If you're not providing the Pi Pico with the TPM's CS signal then GPIO 3 must be grounded!
 > GPIO 3 is grounded by default on the provided PCB.  
 
 Connect to the Pi Pico with your serial terminal of choice and boot the target system.  
