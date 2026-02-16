@@ -34,7 +34,7 @@ The following methods of connecting to the SPI bus have been tested.
 
 ### WSON8 Probe
 
-All of the tested devices have a [SPI flash memory chip](https://www.winbond.com/resource-files/W25R256JV%20RevD%2006162020.pdf) on the same bus as the TPM chip.
+All of the tested devices have a [SPI flash memory chip](https://www.winbond.com/resource-files/W25R256JV%20RevD%2006162020.pdf), presumably the BIOS/UEFI, on the same bus as the TPM chip.
 A [WSON8 probe](https://www.amazon.com/Amagogo-Download-Efficient-Industrial-Electronic/dp/B0DRZGRN81) can be used to connect to the SPI bus via the flash chip.
 This is by far the easiest way to connect to the SPI bus.
 
@@ -88,6 +88,9 @@ cd build
 cmake ..
 make
 ```
+
+> [!NOTE]
+> Built on Debian 12.
 
 ## Install
 
