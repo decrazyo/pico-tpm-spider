@@ -6,7 +6,7 @@ It passively monitors SPI communication with a discrete TPM 2.0 chip and parses 
 This project specifically targets the STMicroelectronics [ST33TPHF2XSPI](https://www.st.com/en/product/st33tphf2xspi) used in several Dell laptops,
 though other devices and TPM 2.0 chips may be compatible.
 
-Pico TPM SPIder is designed to capture TPM SPI traffic clocked at 25MHz to 50MHz with or without the use of a chip select signal.
+Pico TPM SPIder is designed to capture TPM SPI traffic clocked at 10MHz to 50MHz with or without the use of a chip select signal.
 Lower frequencies can be supported by modifying [sniffer.pio](https://github.com/decrazyo/pico-tpm-spider/blob/main/sniffer.pio).
 Higher frequencies may be supported through overclocking.
 

