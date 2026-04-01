@@ -16,11 +16,12 @@ Higher frequencies may be supported through overclocking.
 
 The following devices have been tested.
 
-| device              | working | bus voltage | chip select  | notes |
-|---------------------|---------|-------------|--------------|-------|
-| Dell Latitude 5320  | yes     | 3.3V        | inaccessible | SPI flash memory, unpopulated SPI connector |
-| Dell Latitude 5431  | yes     | 3.3V        | inaccessible | SPI flash memory |
-| Dell Precision 3490 | yes     | 1.8V        | inaccessible | SPI flash memory |
+| device               | working | bus voltage | chip select  | notes |
+|----------------------|---------|-------------|--------------|-------|
+| Dell Latitude 5320   | yes     | 3.3V        | inaccessible | SPI flash memory, unpopulated SPI connector |
+| Dell Latitude 5431   | yes     | 3.3V        | inaccessible | SPI flash memory |
+| Dell Precision 3490  | yes     | 1.8V        | inaccessible | SPI flash memory |
+| HP EliteBook 645 G10 | yes     | 3.3V        | inaccessible | SPI flash memory, use a shorter sniffer timeout (~30ns) |
 
 > [!CAUTION]
 > Check the voltage of your target device's SPI bus!
